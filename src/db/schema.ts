@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   customType,
   index,
   integer,
@@ -19,6 +20,8 @@ export const users = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     displayName: text("display_name").notNull(),
     externalId: text("external_id"),
+    /** Profilbild (hochgeladenes Foto); ohne Bild zeigt die App Initialen. */
+    avatarMediaId: uuid("avatar_media_id").references((): AnyPgColumn => media.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("users_external_id_idx").on(t.externalId)],

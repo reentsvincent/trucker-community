@@ -1,6 +1,6 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
+import { PGlite, type PGliteOptions } from "@electric-sql/pglite";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { drizzle as drizzleNodePg } from "drizzle-orm/node-postgres";
 import { migrate as migrateNodePg } from "drizzle-orm/node-postgres/migrator";
@@ -42,10 +42,34 @@ export async function openDatabase(
 
   // PGlite legt fehlende übergeordnete Ordner nicht selbst an.
   if (target.dataDir) await mkdir(target.dataDir, { recursive: true });
-  const client = new PGlite(target.dataDir);
+  const client = new PGlite(target.dataDir, await pgliteAssets());
   const db = drizzlePglite(client, { schema });
   if (migrate) await migratePglite(db, { migrationsFolder });
   return { db, close: () => client.close() };
+}
+
+/**
+ * PGlite lädt seine WebAssembly-Dateien normalerweise über `new URL(…, import.meta.url)`.
+ * Innerhalb von Next.js scheitert das (fremdes URL-Objekt). Deshalb laden wir
+ * die Dateien selbst über normale Pfade und reichen sie durch.
+ */
+let assets:
+  Promise<Pick<PGliteOptions, "pgliteWasmModule" | "initdbWasmModule" | "fsBundle">> | undefined;
+function pgliteAssets() {
+  assets ??= (async () => {
+    const dir = path.join(process.cwd(), "node_modules", "@electric-sql", "pglite", "dist");
+    const [pglite, initdb, data] = await Promise.all([
+      readFile(path.join(dir, "pglite.wasm")),
+      readFile(path.join(dir, "initdb.wasm")),
+      readFile(path.join(dir, "pglite.data")),
+    ]);
+    return {
+      pgliteWasmModule: await WebAssembly.compile(pglite),
+      initdbWasmModule: await WebAssembly.compile(initdb),
+      fsBundle: new Blob([data]),
+    };
+  })();
+  return assets;
 }
 
 /** Ohne DATABASE_URL: eingebettetes Postgres im Projektordner (.data/pglite). */

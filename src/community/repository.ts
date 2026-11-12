@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, lt, max, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
 import type { output, ZodType } from "zod";
 import type { Db } from "@/db/database";
 import { comments, media, posts, topics, users } from "@/db/schema";
@@ -27,6 +27,7 @@ export class CommunityError extends Error {
 export interface Author {
   id: string;
   displayName: string;
+  avatarUrl: string | null;
 }
 
 export interface TopicSummary {
@@ -53,6 +54,8 @@ export interface PostSummary {
   createdAt: Date;
   lastActivityAt: Date;
   commentCount: number;
+  /** Neuester Kommentar als Vorschau im Feed. */
+  latestComment: CommentView | null;
 }
 
 export interface CommentView {
@@ -62,7 +65,7 @@ export interface CommentView {
   createdAt: Date;
 }
 
-export interface PostDetail extends Omit<PostSummary, "excerpt"> {
+export interface PostDetail extends Omit<PostSummary, "excerpt" | "latestComment"> {
   body: string;
   comments: CommentView[];
 }
@@ -91,16 +94,16 @@ export async function createUser(db: Db, displayName: string): Promise<Author> {
     .values({ displayName: name })
     .returning({ id: users.id, displayName: users.displayName });
   if (!row) throw new Error("Mitglied wurde nicht angelegt.");
-  return row;
+  return { ...row, avatarUrl: null };
 }
 
 export async function findUser(db: Db, id: string): Promise<Author | null> {
   if (!isUuid(id)) return null;
   const [row] = await db
-    .select({ id: users.id, displayName: users.displayName })
+    .select({ id: users.id, displayName: users.displayName, avatarMediaId: users.avatarMediaId })
     .from(users)
     .where(eq(users.id, id));
-  return row ?? null;
+  return row ? toAuthor(row.id, row.displayName, row.avatarMediaId) : null;
 }
 
 export async function listTopics(db: Db): Promise<TopicSummary[]> {
@@ -158,6 +161,7 @@ export async function listPosts(db: Db, options: ListPostsOptions = {}): Promise
       mediaId: posts.mediaId,
       authorId: users.id,
       authorName: users.displayName,
+      authorAvatar: users.avatarMediaId,
       createdAt: posts.createdAt,
       lastActivityAt: posts.lastActivityAt,
       commentCount: sql<number>`coalesce(${commentCounts.total}, 0)`.mapWith(Number),
@@ -170,12 +174,18 @@ export async function listPosts(db: Db, options: ListPostsOptions = {}): Promise
     .orderBy(desc(posts.lastActivityAt), desc(posts.id))
     .limit(Math.min(Math.max(limit, 1), 50));
 
-  return rows.map(({ body, authorId, authorName, mediaId, background, ...row }) => ({
+  const latest = await latestComments(
+    db,
+    rows.filter((row) => row.commentCount > 0).map((row) => row.id),
+  );
+
+  return rows.map(({ body, authorId, authorName, authorAvatar, mediaId, background, ...row }) => ({
     ...row,
     excerpt: row.kind === "text" ? excerpt(body) : body,
     background: background as BackgroundKey | null,
     imageUrl: mediaUrl(mediaId),
-    author: { id: authorId, displayName: authorName },
+    author: toAuthor(authorId, authorName, authorAvatar),
+    latestComment: latest.get(row.id) ?? null,
   }));
 }
 
@@ -192,6 +202,7 @@ export async function getPost(db: Db, id: string): Promise<PostDetail | null> {
       mediaId: posts.mediaId,
       authorId: users.id,
       authorName: users.displayName,
+      authorAvatar: users.avatarMediaId,
       createdAt: posts.createdAt,
       lastActivityAt: posts.lastActivityAt,
     })
@@ -207,6 +218,7 @@ export async function getPost(db: Db, id: string): Promise<PostDetail | null> {
       body: comments.body,
       authorId: users.id,
       authorName: users.displayName,
+      authorAvatar: users.avatarMediaId,
       createdAt: comments.createdAt,
     })
     .from(comments)
@@ -214,17 +226,14 @@ export async function getPost(db: Db, id: string): Promise<PostDetail | null> {
     .where(eq(comments.postId, id))
     .orderBy(asc(comments.createdAt), asc(comments.id));
 
-  const { authorId, authorName, mediaId, background, ...post } = row;
+  const { authorId, authorName, authorAvatar, mediaId, background, ...post } = row;
   return {
     ...post,
     background: background as BackgroundKey | null,
     imageUrl: mediaUrl(mediaId),
-    author: { id: authorId, displayName: authorName },
+    author: toAuthor(authorId, authorName, authorAvatar),
     commentCount: commentRows.length,
-    comments: commentRows.map(({ authorId: cid, authorName: cname, ...comment }) => ({
-      ...comment,
-      author: { id: cid, displayName: cname },
-    })),
+    comments: commentRows.map(toCommentView),
   };
 }
 
@@ -316,6 +325,22 @@ export async function saveImage(
   return { id: row.id, url: mediaUrl(row.id) as string };
 }
 
+/** Setzt ein neues Profilbild (ersetzt das alte). */
+export async function setAvatar(db: Db, userId: string, image: UploadedImage): Promise<Author> {
+  const saved = await saveImage(db, userId, image);
+  const [row] = await db
+    .update(users)
+    .set({ avatarMediaId: saved.id })
+    .where(eq(users.id, userId))
+    .returning({
+      id: users.id,
+      displayName: users.displayName,
+      avatarMediaId: users.avatarMediaId,
+    });
+  if (!row) throw new CommunityError("not_found", "Mitglied nicht gefunden.");
+  return toAuthor(row.id, row.displayName, row.avatarMediaId);
+}
+
 export async function getImage(db: Db, id: string): Promise<UploadedImage | null> {
   if (!isUuid(id)) return null;
   const [row] = await db
@@ -326,6 +351,48 @@ export async function getImage(db: Db, id: string): Promise<UploadedImage | null
 }
 
 // ---------------------------------------------------------------------------
+
+interface CommentRow {
+  id: string;
+  body: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string | null;
+  createdAt: Date;
+}
+
+function toCommentView({
+  authorId,
+  authorName,
+  authorAvatar,
+  ...comment
+}: CommentRow): CommentView {
+  return { ...comment, author: toAuthor(authorId, authorName, authorAvatar) };
+}
+
+/** Neuester Kommentar je Beitrag (für die Vorschau im Feed), in einer Abfrage. */
+async function latestComments(db: Db, postIds: string[]): Promise<Map<string, CommentView>> {
+  if (postIds.length === 0) return new Map();
+  const rows = await db
+    .selectDistinctOn([comments.postId], {
+      postId: comments.postId,
+      id: comments.id,
+      body: comments.body,
+      authorId: users.id,
+      authorName: users.displayName,
+      authorAvatar: users.avatarMediaId,
+      createdAt: comments.createdAt,
+    })
+    .from(comments)
+    .innerJoin(users, eq(users.id, comments.authorId))
+    .where(inArray(comments.postId, postIds))
+    .orderBy(comments.postId, desc(comments.createdAt), desc(comments.id));
+  return new Map(rows.map(({ postId, ...row }) => [postId, toCommentView(row)]));
+}
+
+function toAuthor(id: string, displayName: string, avatarMediaId: string | null): Author {
+  return { id, displayName, avatarUrl: mediaUrl(avatarMediaId) };
+}
 
 function mediaUrl(id: string | null): string | null {
   return id ? `/media/${id}` : null;

@@ -1,1 +1,30 @@
 @import "tailwindcss";
+
+/* cargovibe-Farben (wie DrivePay) */
+@theme {
+  --color-brand: #a085ff;
+  --color-brand-ink: #6e4fe0;
+  --color-ink: #111114;
+  --color-muted: #6b6b76;
+  --color-line: #e5e5ea;
+  --color-surface: #f7f5ff;
+  --color-danger: #e5484d;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: #f4f3f8;
+  color: var(--color-ink);
+}
+
+/* Themen-Leiste: waagerecht wischen, ohne sichtbare Scrollleiste */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

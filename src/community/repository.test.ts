@@ -13,6 +13,7 @@ import {
   listPosts,
   listTopics,
   saveImage,
+  setAvatar,
 } from "./repository";
 import { DEFAULT_TOPICS } from "./topics";
 
@@ -231,6 +232,45 @@ describe("Kommentare", () => {
         body: "Hallo",
       }),
     ).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
+describe("Profilbilder", () => {
+  it("zeigt das Profilbild am Mitglied, an Beiträgen und Kommentaren", async () => {
+    const author = await member();
+    const updated = await setAvatar(db(), author.id, jpeg());
+    expect(updated.avatarUrl).toMatch(/^\/media\//);
+    expect((await findUser(db(), author.id))?.avatarUrl).toBe(updated.avatarUrl);
+
+    const { id } = await textPost(author.id, "Mit Bild");
+    await createComment(db(), author.id, { postId: id, body: "Ich auch" });
+    const post = await getPost(db(), id);
+    expect(post?.author.avatarUrl).toBe(updated.avatarUrl);
+    expect(post?.comments[0]?.author.avatarUrl).toBe(updated.avatarUrl);
+  });
+
+  it("zeigt ohne Foto kein Bild (dann Initialen)", async () => {
+    expect((await member()).avatarUrl).toBeNull();
+  });
+});
+
+describe("Kommentar-Vorschau im Feed", () => {
+  it("zeigt den neuesten Kommentar unter dem Beitrag", async () => {
+    const author = await member("Kalle Krause");
+    const other = await member("Moni Meier");
+    const withComments = await textPost(author.id, "Mit Kommentaren");
+    await textPost(author.id, "Ohne Kommentare");
+    await createComment(db(), other.id, { postId: withComments.id, body: "Erster" });
+    await pause();
+    await createComment(db(), author.id, { postId: withComments.id, body: "Zweiter" });
+
+    const feed = await listPosts(db());
+    const commented = feed.find((p) => p.id === withComments.id);
+    expect(commented?.latestComment).toMatchObject({
+      body: "Zweiter",
+      author: { displayName: "Kalle Krause" },
+    });
+    expect(feed.find((p) => p.id !== withComments.id)?.latestComment).toBeNull();
   });
 });
 
