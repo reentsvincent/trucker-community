@@ -2,7 +2,9 @@
 
 > Feature von **cargovibe**: eine Community für LKW-Fahrer. In Themenbereichen (z. B. Parkplätze, Recht & Lenkzeiten, Technik) können Fahrer Beiträge schreiben und kommentieren. Vorbild sind die Truckerforen, die Fahrer heute schon aktiv nutzen.
 
-**Status:** Prototyp mit Oberfläche nach UI-Skizze. Läuft lokal, Veröffentlichung auf Vercel folgt.
+**Status:** Prototyp mit Oberfläche nach UI-Skizze.
+
+**Live:** https://trucker-community.vercel.app (Vercel, Region Frankfurt; Datenbank: Neon-Postgres, Frankfurt)
 
 ## Umfang des Prototyps
 
@@ -36,3 +38,11 @@ pnpm db:seed       # Beispiel-Beiträge zum Vorführen anlegen
 ```
 
 Ohne `DATABASE_URL` läuft ein eingebettetes Postgres in `.data/pglite`. Es muss nichts installiert werden.
+
+## Veröffentlichen
+
+```bash
+npx vercel deploy --prod   # baut auf Vercel (inkl. Migrationen) und veröffentlicht
+```
+
+`DATABASE_URL` setzt die Neon-Integration automatisch. Die Migrationen laufen beim Bauen (`pnpm db:migrate`, siehe [vercel.json](vercel.json)).
