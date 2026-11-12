@@ -1,13 +1,14 @@
-/** Start-Themenbereiche, angelehnt an die Kategorien großer Truckerforen. */
+/** Start-Themenbereiche, angelehnt an große Truckerforen und die UI-Skizze. */
 export const DEFAULT_TOPICS = [
+  { id: "allgemein", name: "Allgemeines", description: "Alles rund um den Fahreralltag." },
   {
     id: "parken",
-    name: "Parkplätze & Rastanlagen",
+    name: "Parkplätze",
     description: "Freie Plätze, Autohöfe, Duschen, Sicherheit über Nacht.",
   },
   {
     id: "strecke",
-    name: "Verkehr & Strecken",
+    name: "Verkehr",
     description: "Baustellen, Sperrungen, Grenzübergänge, Fähren.",
   },
   {
@@ -15,19 +16,16 @@ export const DEFAULT_TOPICS = [
     name: "Recht & Lenkzeiten",
     description: "Lenk- und Ruhezeiten, Kontrollen, Bußgelder, Arbeitsrecht.",
   },
+  { id: "gehalt", name: "Gehalt", description: "Lohn, Spesen, Zuschläge – was ist fair?" },
+  { id: "jobs", name: "Jobs", description: "Erfahrungen mit Speditionen, Stellen, Wechsel." },
   {
     id: "technik",
-    name: "Technik & Fahrzeuge",
+    name: "Technik",
     description: "Zugmaschinen, Auflieger, Pannen, Werkstätten, Ausstattung.",
   },
   {
-    id: "jobs",
-    name: "Jobs & Speditionen",
-    description: "Erfahrungen mit Arbeitgebern, Stellen, Lohn und Spesen.",
-  },
-  {
-    id: "plauderecke",
-    name: "Plauderecke",
-    description: "Alles, was sonst noch auf dem Bock passiert.",
+    id: "freizeit",
+    name: "Sport & Freizeit",
+    description: "Fit bleiben unterwegs, Kochen im Lkw, Hobbys.",
   },
 ] as const;

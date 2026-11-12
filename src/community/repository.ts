@@ -1,10 +1,13 @@
 import { and, asc, count, desc, eq, lt, max, sql } from "drizzle-orm";
 import type { output, ZodType } from "zod";
 import type { Db } from "@/db/database";
-import { comments, posts, topics, users } from "@/db/schema";
+import { comments, media, posts, topics, users } from "@/db/schema";
+import type { BackgroundKey } from "./backgrounds";
 import { DEFAULT_TOPICS } from "./topics";
 import {
   DisplayNameSchema,
+  IMAGE_TYPES,
+  MAX_IMAGE_BYTES,
   NewCommentSchema,
   NewPostSchema,
   type NewComment,
@@ -34,12 +37,18 @@ export interface TopicSummary {
   lastActivityAt: Date | null;
 }
 
+export type PostKind = "text" | "styled" | "image";
+
 export interface PostSummary {
   id: string;
   topicId: string;
   topicName: string;
-  title: string;
+  kind: PostKind;
+  /** Im Feed gekürzt (nur bei normalen Text-Beiträgen), sonst vollständig. */
   excerpt: string;
+  background: BackgroundKey | null;
+  /** URL des Bildes bei Bild-Beiträgen. */
+  imageUrl: string | null;
   author: Author;
   createdAt: Date;
   lastActivityAt: Date;
@@ -58,7 +67,7 @@ export interface PostDetail extends Omit<PostSummary, "excerpt"> {
   comments: CommentView[];
 }
 
-const EXCERPT_LENGTH = 160;
+const EXCERPT_LENGTH = 280;
 
 /** Legt fehlende Start-Themenbereiche an und aktualisiert Namen/Beschreibungen. */
 export async function ensureTopics(db: Db): Promise<void> {
@@ -117,6 +126,7 @@ export async function getTopic(db: Db, id: string): Promise<TopicSummary | null>
 
 export interface ListPostsOptions {
   topicId?: string;
+  authorId?: string;
   limit?: number;
   /** Für „Ältere laden“: nur Beiträge mit älterer letzter Aktivität. */
   before?: Date;
@@ -124,7 +134,7 @@ export interface ListPostsOptions {
 
 /** Beiträge, zuletzt aktive zuerst (wie in Foren üblich). */
 export async function listPosts(db: Db, options: ListPostsOptions = {}): Promise<PostSummary[]> {
-  const { topicId, limit = 20, before } = options;
+  const { topicId, authorId, limit = 20, before } = options;
   const commentCounts = db
     .select({ postId: comments.postId, total: count(comments.id).as("total") })
     .from(comments)
@@ -133,6 +143,7 @@ export async function listPosts(db: Db, options: ListPostsOptions = {}): Promise
 
   const filters = [
     topicId ? eq(posts.topicId, topicId) : undefined,
+    authorId ? eq(posts.authorId, authorId) : undefined,
     before ? lt(posts.lastActivityAt, before) : undefined,
   ].filter((filter) => filter !== undefined);
 
@@ -141,8 +152,10 @@ export async function listPosts(db: Db, options: ListPostsOptions = {}): Promise
       id: posts.id,
       topicId: posts.topicId,
       topicName: topics.name,
-      title: posts.title,
+      kind: posts.kind,
       body: posts.body,
+      background: posts.background,
+      mediaId: posts.mediaId,
       authorId: users.id,
       authorName: users.displayName,
       createdAt: posts.createdAt,
@@ -157,9 +170,11 @@ export async function listPosts(db: Db, options: ListPostsOptions = {}): Promise
     .orderBy(desc(posts.lastActivityAt), desc(posts.id))
     .limit(Math.min(Math.max(limit, 1), 50));
 
-  return rows.map(({ body, authorId, authorName, ...row }) => ({
+  return rows.map(({ body, authorId, authorName, mediaId, background, ...row }) => ({
     ...row,
-    excerpt: excerpt(body),
+    excerpt: row.kind === "text" ? excerpt(body) : body,
+    background: background as BackgroundKey | null,
+    imageUrl: mediaUrl(mediaId),
     author: { id: authorId, displayName: authorName },
   }));
 }
@@ -171,8 +186,10 @@ export async function getPost(db: Db, id: string): Promise<PostDetail | null> {
       id: posts.id,
       topicId: posts.topicId,
       topicName: topics.name,
-      title: posts.title,
+      kind: posts.kind,
       body: posts.body,
+      background: posts.background,
+      mediaId: posts.mediaId,
       authorId: users.id,
       authorName: users.displayName,
       createdAt: posts.createdAt,
@@ -197,9 +214,11 @@ export async function getPost(db: Db, id: string): Promise<PostDetail | null> {
     .where(eq(comments.postId, id))
     .orderBy(asc(comments.createdAt), asc(comments.id));
 
-  const { authorId, authorName, ...post } = row;
+  const { authorId, authorName, mediaId, background, ...post } = row;
   return {
     ...post,
+    background: background as BackgroundKey | null,
+    imageUrl: mediaUrl(mediaId),
     author: { id: authorId, displayName: authorName },
     commentCount: commentRows.length,
     comments: commentRows.map(({ authorId: cid, authorName: cname, ...comment }) => ({
@@ -221,9 +240,27 @@ export async function createPost(
     .where(eq(topics.id, data.topicId));
   if (!topic) throw new CommunityError("not_found", "Diesen Themenbereich gibt es nicht.");
 
+  if (data.kind === "image") {
+    const [image] = await db
+      .select({ ownerId: media.ownerId })
+      .from(media)
+      .where(eq(media.id, data.mediaId));
+    // Nur eigene, hochgeladene Bilder dürfen verwendet werden.
+    if (!image || image.ownerId !== authorId) {
+      throw new CommunityError("invalid", "Das Bild wurde nicht gefunden. Bitte neu auswählen.");
+    }
+  }
+
   const [row] = await db
     .insert(posts)
-    .values({ topicId: data.topicId, authorId, title: data.title, body: data.body })
+    .values({
+      topicId: data.topicId,
+      authorId,
+      kind: data.kind,
+      body: data.body,
+      background: data.kind === "styled" ? data.background : null,
+      mediaId: data.kind === "image" ? data.mediaId : null,
+    })
     .returning({ id: posts.id });
   if (!row) throw new Error("Beitrag wurde nicht gespeichert.");
   return row;
@@ -254,7 +291,45 @@ export async function createComment(
   });
 }
 
+export interface UploadedImage {
+  mimeType: string;
+  data: Buffer;
+}
+
+/** Speichert ein Bild und liefert seine ID für einen Bild-Beitrag. */
+export async function saveImage(
+  db: Db,
+  ownerId: string,
+  image: UploadedImage,
+): Promise<{ id: string; url: string }> {
+  if (!(IMAGE_TYPES as readonly string[]).includes(image.mimeType)) {
+    throw new CommunityError("invalid", "Bitte ein Foto im Format JPEG, PNG oder WebP wählen.");
+  }
+  if (image.data.byteLength === 0 || image.data.byteLength > MAX_IMAGE_BYTES) {
+    throw new CommunityError("invalid", "Das Bild ist zu groß (höchstens 3 MB).");
+  }
+  const [row] = await db
+    .insert(media)
+    .values({ ownerId, mimeType: image.mimeType, data: image.data })
+    .returning({ id: media.id });
+  if (!row) throw new Error("Bild wurde nicht gespeichert.");
+  return { id: row.id, url: mediaUrl(row.id) as string };
+}
+
+export async function getImage(db: Db, id: string): Promise<UploadedImage | null> {
+  if (!isUuid(id)) return null;
+  const [row] = await db
+    .select({ mimeType: media.mimeType, data: media.data })
+    .from(media)
+    .where(eq(media.id, id));
+  return row ?? null;
+}
+
 // ---------------------------------------------------------------------------
+
+function mediaUrl(id: string | null): string | null {
+  return id ? `/media/${id}` : null;
+}
 
 function parse<T extends ZodType>(schema: T, input: unknown): output<T> {
   const result = schema.safeParse(input);

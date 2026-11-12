@@ -1,4 +1,13 @@
-import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  customType,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 /**
  * Mitglieder der Community. `externalId` ist für die spätere Anbindung an
@@ -23,6 +32,27 @@ export const topics = pgTable("topics", {
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
+/** Binärdaten (Postgres `bytea`). */
+const bytea = customType<{ data: Buffer; driverData: Buffer | Uint8Array }>({
+  dataType: () => "bytea",
+  // PGlite liefert Uint8Array, node-postgres Buffer: überall Buffer daraus machen.
+  fromDriver: (value) => Buffer.from(value),
+});
+
+/**
+ * Hochgeladene Bilder. Für den Prototyp direkt in Postgres (kein extra Dienst);
+ * die App verkleinert Fotos vor dem Hochladen. Später ggf. Bilderspeicher (z. B. Vercel Blob).
+ */
+export const media = pgTable("media", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: uuid("owner_id")
+    .notNull()
+    .references(() => users.id),
+  mimeType: text("mime_type").notNull(),
+  data: bytea("data").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const posts = pgTable(
   "posts",
   {
@@ -33,8 +63,13 @@ export const posts = pgTable(
     authorId: uuid("author_id")
       .notNull()
       .references(() => users.id),
-    title: text("title").notNull(),
+    /** `text`: normaler Text, `styled`: kurzer Text auf farbigem Hintergrund, `image`: Bild mit optionalem Text. */
+    kind: text("kind", { enum: ["text", "styled", "image"] }).notNull(),
     body: text("body").notNull(),
+    /** Nur bei `styled`: Schlüssel des Hintergrunds (siehe community/backgrounds.ts). */
+    background: text("background"),
+    /** Nur bei `image`. */
+    mediaId: uuid("media_id").references(() => media.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     /** Zeitpunkt des letzten Kommentars; danach wird wie in Foren sortiert. */
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull().defaultNow(),

@@ -7,15 +7,18 @@ import {
   createUser,
   ensureTopics,
   findUser,
+  getImage,
   getPost,
   getTopic,
   listPosts,
   listTopics,
+  saveImage,
 } from "./repository";
 import { DEFAULT_TOPICS } from "./topics";
 
 let database: Database;
 const db = () => database.db;
+const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 beforeEach(async () => {
   database = await openDatabase({ kind: "pglite" });
@@ -26,9 +29,10 @@ afterEach(async () => {
   await database.close();
 });
 
-async function member(name = "Kalle") {
-  return createUser(db(), name);
-}
+const member = (name = "Kalle Krause") => createUser(db(), name);
+const textPost = (authorId: string, body: string, topicId = "allgemein") =>
+  createPost(db(), authorId, { kind: "text", topicId, body });
+const jpeg = () => ({ mimeType: "image/jpeg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) });
 
 describe("Themenbereiche", () => {
   it("legt die Start-Themen in fester Reihenfolge an", async () => {
@@ -44,11 +48,7 @@ describe("Themenbereiche", () => {
 
   it("zählt Beiträge pro Themenbereich", async () => {
     const author = await member();
-    await createPost(db(), author.id, {
-      topicId: "parken",
-      title: "Autohof Lohfelden",
-      body: "Voll ab 18 Uhr.",
-    });
+    await textPost(author.id, "Autohof Lohfelden voll ab 18 Uhr.", "parken");
     expect(await getTopic(db(), "parken")).toMatchObject({ postCount: 1 });
     expect(await getTopic(db(), "recht")).toMatchObject({ postCount: 0 });
     expect(await getTopic(db(), "gibt-es-nicht")).toBeNull();
@@ -57,7 +57,7 @@ describe("Themenbereiche", () => {
 
 describe("Mitglieder", () => {
   it("bereinigt den Namen", async () => {
-    expect((await createUser(db(), "  Kalle   der  Fahrer ")).displayName).toBe("Kalle der Fahrer");
+    expect((await createUser(db(), "  Kalle   Krause ")).displayName).toBe("Kalle Krause");
   });
 
   it("lehnt zu kurze Namen ab", async () => {
@@ -71,21 +71,22 @@ describe("Mitglieder", () => {
   });
 });
 
-describe("Beiträge", () => {
+describe("Text-Beiträge", () => {
   it("speichert einen Beitrag und zeigt ihn mit Autor und Thema", async () => {
     const author = await member();
     const { id } = await createPost(db(), author.id, {
+      kind: "text",
       topicId: "technik",
-      title: "  Retarder   pfeift ",
-      body: "Seit gestern pfeift der Retarder bei 80.\n\n\n\nKennt das wer?",
+      body: "  Seit gestern pfeift der Retarder bei 80.\n\n\n\nKennt das wer?  ",
     });
 
-    const post = await getPost(db(), id);
-    expect(post).toMatchObject({
-      title: "Retarder pfeift",
+    expect(await getPost(db(), id)).toMatchObject({
+      kind: "text",
       body: "Seit gestern pfeift der Retarder bei 80.\n\nKennt das wer?",
       topicId: "technik",
-      topicName: "Technik & Fahrzeuge",
+      topicName: "Technik",
+      background: null,
+      imageUrl: null,
       author,
       commentCount: 0,
       comments: [],
@@ -94,23 +95,17 @@ describe("Beiträge", () => {
 
   it("lehnt unbekannte Themen und leere Texte ab", async () => {
     const author = await member();
-    await expect(
-      createPost(db(), author.id, { topicId: "gibt-es-nicht", title: "Hallo", body: "Text" }),
-    ).rejects.toMatchObject({ code: "not_found" });
-    await expect(
-      createPost(db(), author.id, { topicId: "parken", title: "Hallo", body: "   " }),
-    ).rejects.toThrow(CommunityError);
+    await expect(textPost(author.id, "Hallo", "gibt-es-nicht")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    await expect(textPost(author.id, "   ")).rejects.toThrow(CommunityError);
   });
 
-  it("kürzt lange Texte in der Übersicht", async () => {
+  it("kürzt lange Texte im Feed", async () => {
     const author = await member();
-    await createPost(db(), author.id, {
-      topicId: "plauderecke",
-      title: "Lang",
-      body: "Wort ".repeat(100),
-    });
+    await textPost(author.id, "Wort ".repeat(200));
     const [summary] = await listPosts(db());
-    expect(summary?.excerpt.length).toBeLessThanOrEqual(160);
+    expect(summary?.excerpt.length).toBeLessThanOrEqual(280);
     expect(summary?.excerpt.endsWith("…")).toBe(true);
   });
 
@@ -120,15 +115,87 @@ describe("Beiträge", () => {
   });
 });
 
+describe("Text auf Hintergrund", () => {
+  it("speichert den gewählten Hintergrund", async () => {
+    const author = await member();
+    const { id } = await createPost(db(), author.id, {
+      kind: "styled",
+      topicId: "gehalt",
+      body: "Endlich Spesen erhöht!",
+      background: "sonne",
+    });
+    expect(await getPost(db(), id)).toMatchObject({ kind: "styled", background: "sonne" });
+  });
+
+  it("verlangt einen bekannten Hintergrund und kurzen Text", async () => {
+    const author = await member();
+    await expect(
+      createPost(db(), author.id, {
+        kind: "styled",
+        topicId: "gehalt",
+        body: "Hallo",
+        background: "rosa" as "lila",
+      }),
+    ).rejects.toThrow("Hintergrund");
+    await expect(
+      createPost(db(), author.id, {
+        kind: "styled",
+        topicId: "gehalt",
+        body: "x".repeat(201),
+        background: "lila",
+      }),
+    ).rejects.toThrow("Höchstens 200 Zeichen");
+  });
+});
+
+describe("Bild-Beiträge", () => {
+  it("speichert ein Bild und verknüpft es mit dem Beitrag", async () => {
+    const author = await member();
+    const image = await saveImage(db(), author.id, jpeg());
+    const { id } = await createPost(db(), author.id, {
+      kind: "image",
+      topicId: "freizeit",
+      body: "",
+      mediaId: image.id,
+    });
+
+    expect(await getPost(db(), id)).toMatchObject({
+      kind: "image",
+      imageUrl: `/media/${image.id}`,
+    });
+    expect(await getImage(db(), image.id)).toEqual(jpeg());
+  });
+
+  it("erlaubt nur eigene Bilder", async () => {
+    const author = await member();
+    const stranger = await member("Fremder Mann");
+    const image = await saveImage(db(), stranger.id, jpeg());
+    await expect(
+      createPost(db(), author.id, {
+        kind: "image",
+        topicId: "freizeit",
+        body: "",
+        mediaId: image.id,
+      }),
+    ).rejects.toThrow("Bild wurde nicht gefunden");
+  });
+
+  it("lehnt falsche Formate und zu große Bilder ab", async () => {
+    const author = await member();
+    await expect(
+      saveImage(db(), author.id, { mimeType: "image/gif", data: Buffer.from([1]) }),
+    ).rejects.toThrow("JPEG, PNG oder WebP");
+    await expect(
+      saveImage(db(), author.id, { mimeType: "image/jpeg", data: Buffer.alloc(4 * 1024 * 1024) }),
+    ).rejects.toThrow("zu groß");
+  });
+});
+
 describe("Kommentare", () => {
   it("hängt Kommentare in zeitlicher Reihenfolge an", async () => {
-    const author = await member("Kalle");
-    const other = await member("Moni");
-    const { id } = await createPost(db(), author.id, {
-      topicId: "parken",
-      title: "Frage",
-      body: "Wo parken in Hamburg?",
-    });
+    const author = await member("Kalle Krause");
+    const other = await member("Moni Meier");
+    const { id } = await textPost(author.id, "Wo parken in Hamburg?", "parken");
 
     await createComment(db(), other.id, { postId: id, body: "Autohof Stillhorn." });
     await createComment(db(), author.id, { postId: id, body: "Danke!" });
@@ -136,27 +203,23 @@ describe("Kommentare", () => {
     const post = await getPost(db(), id);
     expect(post?.commentCount).toBe(2);
     expect(post?.comments.map((c) => [c.author.displayName, c.body])).toEqual([
-      ["Moni", "Autohof Stillhorn."],
-      ["Kalle", "Danke!"],
+      ["Moni Meier", "Autohof Stillhorn."],
+      ["Kalle Krause", "Danke!"],
     ]);
   });
 
   it("schiebt kommentierte Beiträge nach oben", async () => {
     const author = await member();
-    const older = await createPost(db(), author.id, {
-      topicId: "parken",
-      title: "Älterer",
-      body: "a",
-    });
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    await createPost(db(), author.id, { topicId: "parken", title: "Neuerer", body: "b" });
-    expect((await listPosts(db())).map((p) => p.title)).toEqual(["Neuerer", "Älterer"]);
+    const older = await textPost(author.id, "Älterer");
+    await pause();
+    await textPost(author.id, "Neuerer");
+    expect((await listPosts(db())).map((p) => p.excerpt)).toEqual(["Neuerer", "Älterer"]);
 
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await pause();
     await createComment(db(), author.id, { postId: older.id, body: "Push" });
 
     const list = await listPosts(db());
-    expect(list.map((p) => p.title)).toEqual(["Älterer", "Neuerer"]);
+    expect(list.map((p) => p.excerpt)).toEqual(["Älterer", "Neuerer"]);
     expect(list[0]?.commentCount).toBe(1);
   });
 
@@ -172,22 +235,27 @@ describe("Kommentare", () => {
 });
 
 describe("Beitragsliste", () => {
-  it("filtert nach Thema und blättert mit „before“", async () => {
+  it("filtert nach Thema und Autor und blättert mit „before“", async () => {
     const author = await member();
-    for (const title of ["Eins", "Zwei", "Drei"]) {
-      await createPost(db(), author.id, { topicId: "jobs", title, body: "x" });
-      await new Promise((resolve) => setTimeout(resolve, 5));
+    const other = await member("Moni Meier");
+    for (const body of ["Eins", "Zwei", "Drei"]) {
+      await textPost(author.id, body, "jobs");
+      await pause();
     }
-    await createPost(db(), author.id, { topicId: "recht", title: "Anderes Thema", body: "x" });
+    await textPost(other.id, "Anderes Thema", "recht");
 
     const firstPage = await listPosts(db(), { topicId: "jobs", limit: 2 });
-    expect(firstPage.map((p) => p.title)).toEqual(["Drei", "Zwei"]);
+    expect(firstPage.map((p) => p.excerpt)).toEqual(["Drei", "Zwei"]);
 
     const nextPage = await listPosts(db(), {
       topicId: "jobs",
       limit: 2,
       before: firstPage.at(-1)?.lastActivityAt,
     });
-    expect(nextPage.map((p) => p.title)).toEqual(["Eins"]);
+    expect(nextPage.map((p) => p.excerpt)).toEqual(["Eins"]);
+
+    expect((await listPosts(db(), { authorId: other.id })).map((p) => p.excerpt)).toEqual([
+      "Anderes Thema",
+    ]);
   });
 });
