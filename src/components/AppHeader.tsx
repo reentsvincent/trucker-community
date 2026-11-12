@@ -13,15 +13,15 @@ export function AppHeader() {
         className="flex flex-1 flex-col rounded-2xl bg-brand px-4 py-2.5 text-white shadow-sm shadow-brand/30"
       >
         <span className="text-lg leading-tight font-bold tracking-tight">Trucker Community</span>
-        <span className="flex items-center gap-1.5 text-xs text-white/85">
+        <span className="mt-0.5 flex items-center gap-1.5 text-xs leading-none text-white/85">
           by
+          {/* Nur der Schriftzug (ohne Lkw), damit er auf einer Linie mit „by“ steht. Lila → weiß. */}
           <Image
-            src="/cargovibe-logo.png"
+            src="/cargovibe-wordmark.png"
             alt="cargovibe"
-            width={76}
-            height={20}
-            // Logo ist lila; auf lila Grund weiß darstellen.
-            className="h-auto w-[76px] brightness-0 invert"
+            width={1500}
+            height={199}
+            className="h-[10px] w-auto brightness-0 invert"
             priority
           />
         </span>
