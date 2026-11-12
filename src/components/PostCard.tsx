@@ -33,10 +33,13 @@ export function PostCard({ post, linked = true }: { post: Post; linked?: boolean
         {"latestComment" in post && post.latestComment && (
           <div className="mt-2 flex gap-2">
             <Avatar author={post.latestComment.author} />
-            <p className="line-clamp-2 min-w-0 flex-1 rounded-2xl bg-surface px-3 py-2 text-sm">
-              <span className="font-semibold">{post.latestComment.author.displayName}</span>{" "}
-              {post.latestComment.body}
-            </p>
+            <div className="min-w-0 flex-1 rounded-2xl bg-surface px-3 py-2 text-sm">
+              {/* Kürzen am inneren Text, sonst lugt die abgeschnittene Zeile unter dem Rand hervor. */}
+              <p className="line-clamp-2">
+                <span className="font-semibold">{post.latestComment.author.displayName}</span>{" "}
+                {post.latestComment.body}
+              </p>
+            </div>
           </div>
         )}
       </footer>
