@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:seed": "tsx scripts/seed.mts",
     "db:migrate": "tsx scripts/migrate.mts",
-    "db:seed:mehr": "tsx scripts/seed-more.mts"
+    "db:seed:mehr": "tsx scripts/seed-more.mts",
+    "db:seed:bewegt": "tsx scripts/seed-bewegt.mts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.16",

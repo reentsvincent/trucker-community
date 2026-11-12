@@ -2,6 +2,11 @@
 export const DEFAULT_TOPICS = [
   { id: "allgemein", name: "Allgemeines", description: "Alles rund um den Fahreralltag." },
   {
+    id: "bewegt",
+    name: "Was mich bewegt",
+    description: "Familie, Einsamkeit, Stress, Sorgen – Platz für alles, was dich beschäftigt.",
+  },
+  {
     id: "parken",
     name: "Parkplätze",
     description: "Freie Plätze, Autohöfe, Duschen, Sicherheit über Nacht.",

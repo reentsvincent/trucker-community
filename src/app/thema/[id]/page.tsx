@@ -4,6 +4,7 @@ import { getTopic } from "@/community/repository";
 import { AppHeader } from "@/components/AppHeader";
 import { Feed, FeedSkeleton } from "@/components/Feed";
 import { NewPostButton } from "@/components/NewPostButton";
+import { SUPPORT_TOPICS, SupportNotice } from "@/components/SupportNotice";
 import { TopicBar, TopicBarSkeleton } from "@/components/TopicBar";
 import { requestDb } from "@/server/db";
 
@@ -35,6 +36,11 @@ async function TopicFeed({ params, searchParams }: PageProps<"/thema/[id]">) {
       <div className="px-4 pt-4">
         <h1 className="text-xl font-bold">{topic.name}</h1>
         <p className="text-sm text-muted">{topic.description}</p>
+        {SUPPORT_TOPICS.has(topic.id) && (
+          <div className="mt-3">
+            <SupportNotice />
+          </div>
+        )}
       </div>
       <Feed
         topicId={topic.id}

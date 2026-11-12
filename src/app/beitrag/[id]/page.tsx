@@ -8,6 +8,7 @@ import { Avatar } from "@/components/Avatar";
 import { CommentForm } from "@/components/CommentForm";
 import { FeedSkeleton } from "@/components/Feed";
 import { PostCard } from "@/components/PostCard";
+import { SUPPORT_TOPICS, SupportNotice } from "@/components/SupportNotice";
 import { requestDb } from "@/server/db";
 import { getCurrentMemberForPage } from "@/server/session";
 
@@ -36,6 +37,11 @@ async function PostView({ params }: Pick<PageProps<"/beitrag/[id]">, "params">) 
         ← {post.topicName}
       </Link>
       <PostCard post={post} linked={false} />
+      {SUPPORT_TOPICS.has(post.topicId) && (
+        <div className="mt-3">
+          <SupportNotice compact />
+        </div>
+      )}
 
       <section id="kommentare" className="mt-5 scroll-mt-24">
         <h2 className="mb-3 text-sm font-semibold text-muted">
